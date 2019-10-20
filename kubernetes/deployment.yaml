@@ -50,7 +50,7 @@ spec:
     spec:
       containers:
       - name: receiver
-        image: wearebrews/photo_backup_receiver
+        image: wearebrews/photo-backup-receiver
         imagePullPolicy: Always
         resources:
           limits:
