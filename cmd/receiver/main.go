@@ -29,16 +29,19 @@ var spacesToken = os.Getenv("SPACES_TOKEN")
 var spacesSecret = os.Getenv("SPACES_SECRET")
 
 var activeRequests = promauto.NewGauge(prometheus.GaugeOpts{
-	Name: "photo_uploader_active_requests",
-	Help: "Number of active connections",
+	Namespace: "photo_uploader",
+	Name:      "active_requests",
+	Help:      "Number of active connections",
 })
 var totalRequests = promauto.NewCounter(prometheus.CounterOpts{
-	Name: "photo_uploader_total_requests",
-	Help: "Number of total requests",
+	Namespace: "photo_uploader",
+	Name:      "total_requests",
+	Help:      "Number of total requests",
 })
 var requestsDenied = promauto.NewCounter(prometheus.CounterOpts{
-	Name: "photo_uploader_requests_denied",
-	Help: "Number of requests denied",
+	Namespace: "photo_uploader",
+	Name:      "denied_requests",
+	Help:      "Number of requests denied",
 })
 
 var sem = make(chan struct{}, numConcurrentUploads)

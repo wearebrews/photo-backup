@@ -34,9 +34,6 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: receiver
-  annotations:
-    prometheus.io/scrape: 'true'
-    prometheus.io/port: '9102'
     
 spec:
   selector:
@@ -47,6 +44,9 @@ spec:
     metadata:
       labels:
         app: receiver
+      annotations:
+        prometheus.io/scrape: 'true'
+        prometheus.io/port: '9102'
     spec:
       containers:
       - name: receiver
