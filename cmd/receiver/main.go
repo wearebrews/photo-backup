@@ -21,7 +21,7 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
-const numConcurrentUploads = 6
+const numConcurrentUploads = 1
 
 const md5Postfix = ".md5"
 
@@ -36,12 +36,24 @@ var totalRequests = promauto.NewCounter(prometheus.CounterOpts{
 	Name: "photo_uploader_total_requests",
 	Help: "Number of total requests",
 })
-var hashSumMiss = promauto.NewCounter(prometheus.CounterOpts{
-	Name: "photo_uploader_hash_sum_miss",
-	Help: "Number of failed requests due to incorrect hash sums",
+var requestsDenied = promauto.NewCounter(prometheus.CounterOpts{
+	Name: "photo_uploader_requests_denied",
+	Help: "Number of requests denied",
 })
 
+var sem = make(chan struct{}, numConcurrentUploads)
+
 func uploadPhoto(w http.ResponseWriter, r *http.Request) {
+	//Limit number of concurrent requests
+	select {
+	case sem <- struct{}{}:
+		defer func() { <-sem }()
+	default:
+		requestsDenied.Inc()
+		http.Error(w, "Not available, try again", http.StatusTooManyRequests)
+		return
+	}
+
 	activeRequests.Inc()
 	defer activeRequests.Dec()
 	totalRequests.Inc()
