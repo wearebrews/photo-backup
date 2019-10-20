@@ -134,7 +134,9 @@ func uploadPhoto(w http.ResponseWriter, r *http.Request) {
 }
 
 func main() {
+	promMux := http.NewServeMux()
+	promMux.Handle("/metrics", promhttp.Handler())
 	http.HandleFunc("/photos/upload", uploadPhoto)
-	go http.ListenAndServe(":2112", promhttp.Handler())
+	go http.ListenAndServe(":9102", promMux)
 	http.ListenAndServe(":8080", nil)
 }

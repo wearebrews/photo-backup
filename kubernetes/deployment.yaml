@@ -36,7 +36,7 @@ metadata:
   name: receiver
   annotations:
     prometheus.io/scrape: 'true'
-    prometheus.io/port: '2112'
+    prometheus.io/port: '9102'
     
 spec:
   selector:
@@ -61,7 +61,9 @@ spec:
             cpu: "100m"
         ports:
         - containerPort: 8080
-        - containerPort: 2112
+          name: http
+        - containerPort: 9102
+          name: prometheus
         env:
         - name: SPACES_TOKEN
           valueFrom:
