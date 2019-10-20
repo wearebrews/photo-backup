@@ -1,0 +1,19 @@
+services:
+- docker
+
+before_install:
+- source install.sh
+
+jobs:
+    include: 
+    - stage: build-only
+      script: bash ./build.sh
+      if: branch != master
+    - stage: build-and-deploy
+      if: branch = master
+      script: bash ./deploy.sh
+      
+notifications:
+  slack: wearebrews:50mQcDAynivWyxqZLCixX6YP
+  email: false
+      
