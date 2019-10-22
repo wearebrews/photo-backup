@@ -1,19 +1,19 @@
 package main
 
 import (
-	"bytes"
 	"crypto/md5"
 	"encoding/base64"
 	"encoding/hex"
 	"io"
+	"io/ioutil"
 	"net/http"
 	"os"
-	"strings"
+	"strconv"
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/credentials"
 	"github.com/aws/aws-sdk-go/aws/session"
-	"github.com/aws/aws-sdk-go/service/s3"
+	"github.com/aws/aws-sdk-go/service/s3/s3manager"
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
@@ -46,6 +46,14 @@ var requestsDenied = promauto.NewCounter(prometheus.CounterOpts{
 
 var sem = make(chan struct{}, numConcurrentUploads)
 
+func hexToBase64(in string) (string, error) {
+	hexBytes, err := hex.DecodeString(in)
+	if err != nil {
+		return "", err
+	}
+	return base64.StdEncoding.EncodeToString(hexBytes), nil
+}
+
 func uploadPhoto(w http.ResponseWriter, r *http.Request) {
 	//Limit number of concurrent requests
 	select {
@@ -61,25 +69,60 @@ func uploadPhoto(w http.ResponseWriter, r *http.Request) {
 	defer activeRequests.Dec()
 	totalRequests.Inc()
 
-	file, header, err := r.FormFile("file")
+	reader, err := r.MultipartReader()
 	if err != nil {
 		logrus.Panic(err)
 	}
 
-	fileName := header.Filename
-	hashSum := r.FormValue("hashsum")
-	logrus.WithField("hashsum", hashSum).Info("New file")
-
-	fileHash := md5.New()
-	if _, err := io.Copy(fileHash, file); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+	part, err := reader.NextPart()
+	if err != nil {
 		logrus.Panic(err)
 	}
 
-	if _, err := file.Seek(0, io.SeekStart); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+	if part.FormName() != "file_size" {
+		http.Error(w, "Unexpected part", http.StatusBadRequest)
+		return
+	}
+	var fileSize int64
+	if bytes, err := ioutil.ReadAll(part); err == nil {
+		fileSizeString := string(bytes)
+		fileSize, err = strconv.ParseInt(fileSizeString, 10, 64)
+		if err != nil {
+			logrus.Panic(err)
+		}
+	} else {
 		logrus.Panic(err)
 	}
+
+	part, err = reader.NextPart()
+	if err != nil {
+		logrus.Panic(err)
+	}
+	if part.FormName() != "hash_sum" {
+		http.Error(w, "Unexpected part", http.StatusBadRequest)
+		return
+	}
+	var hashSum string
+	if bytes, err := ioutil.ReadAll(part); err == nil {
+		hashSum = string(bytes)
+	} else {
+		logrus.Panic(err)
+	}
+
+	logrus.WithField("hashsum", hashSum).WithField("size", fileSize).Info("New file")
+
+	part, err = reader.NextPart()
+	if err != nil {
+		logrus.Panic(err)
+	}
+
+	if part.FormName() != "file" {
+		http.Error(w, "Unexpected part", http.StatusBadRequest)
+		return
+	}
+
+	hash := md5.New()
+	tr := io.TeeReader(part, hash)
 
 	endpoint := "https://fra1.digitaloceanspaces.com"
 	bucket := "brews"
@@ -88,51 +131,23 @@ func uploadPhoto(w http.ResponseWriter, r *http.Request) {
 		Region:      aws.String("us-east-1"),
 		Credentials: credentials.NewStaticCredentials(spacesToken, spacesSecret, ""),
 	})
-	svc := s3.New(sess)
+	uploader := s3manager.NewUploader(sess)
 
-	hashBytes := fileHash.Sum(nil)
-	hashBytesHexString := hex.EncodeToString(hashBytes)
-	hashBytesBase64String := base64.StdEncoding.EncodeToString(hashBytes)
-
-	if hashBytesHexString != hashSum {
-		http.Error(w, "Hashes are not identical!", http.StatusBadRequest)
-		logrus.WithField("server_hash", string(hashBytes)).WithField("client_hash", hashSum).Warn("Invalid request")
-		return
-	}
-	resp, err := svc.PutObject(&s3.PutObjectInput{
-		Bucket:     &bucket,
-		Key:        &fileName,
-		Body:       file,
-		ContentMD5: aws.String(hashBytesBase64String),
+	_, err = uploader.Upload(&s3manager.UploadInput{
+		Bucket: &bucket,
+		Key:    aws.String(part.FileName()),
+		Body:   tr,
 	})
-
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		logrus.Panic(err)
 	}
 
-	if s3Hash := strings.Trim(*resp.ETag, "\""); s3Hash != hashBytesHexString {
-		http.Error(w, "MD5 sums does not match after upload", http.StatusInternalServerError)
-		logrus.WithField("server_hash", hashBytesBase64String).WithField("s3_hash", s3Hash).Panic("MD5 does not match")
-	}
-	hashedHashBytes := md5.Sum([]byte(hashBytesHexString))
-	hashedHashBytesBase64String := base64.StdEncoding.EncodeToString(hashedHashBytes[:16])
-	hashedHashBytesHexString := hex.EncodeToString(hashedHashBytes[:16])
-	resp, err = svc.PutObject(&s3.PutObjectInput{
-		Bucket:     &bucket,
-		Key:        aws.String(fileName + md5Postfix),
-		Body:       bytes.NewReader([]byte(hashBytesHexString)),
-		ContentMD5: aws.String(hashedHashBytesBase64String),
-	})
-
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		logrus.Panic(err)
-	}
-
-	if s3Hash := strings.Trim(*resp.ETag, "\""); s3Hash != hashedHashBytesHexString {
-		http.Error(w, "MD5 sums does not match after upload", http.StatusInternalServerError)
-		logrus.WithField("server_hash", hashBytesBase64String).WithField("s3_hash", s3Hash).Panic("MD5 does not match")
+	hashBytes := hash.Sum(nil)
+	hashHexString := hex.EncodeToString(hashBytes[:16])
+	if hashHexString != hashSum {
+		http.Error(w, "Hash does not match", http.StatusInternalServerError)
+		logrus.WithField("client_hash", hashSum).WithField("server_hash", hashHexString).Panic("Hash does not match")
 	}
 }
 
