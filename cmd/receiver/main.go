@@ -45,13 +45,11 @@ var requestsDenied = promauto.NewCounter(prometheus.CounterOpts{
 	Help:      "Number of requests denied",
 })
 
-func hexToBase64(in string) (string, error) {
-	hexBytes, err := hex.DecodeString(in)
-	if err != nil {
-		return "", err
-	}
-	return base64.StdEncoding.EncodeToString(hexBytes), nil
-}
+var requestsCompleted = promauto.NewCounter(prometheus.CounterOpts{
+	Namespace: "photo_uploader",
+	Name:      "completed_requests",
+	Help:      "Number of successful requests",
+})
 
 func uploadPhoto(sem chan struct{}, uploader *s3manager.Uploader) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -120,6 +118,9 @@ func uploadPhoto(sem chan struct{}, uploader *s3manager.Uploader) http.HandlerFu
 			http.Error(w, "Hash does not match", http.StatusInternalServerError)
 			logrus.WithField("client_hash", hashSum).WithField("server_hash", hashHexString).Panic("Hash does not match")
 		}
+
+		//Increase completed requests count
+		requestsCompleted.Inc()
 	}
 }
 
