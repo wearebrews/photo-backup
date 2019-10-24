@@ -129,7 +129,7 @@ func main() {
 		Region:      aws.String("us-east-1"),
 		Credentials: credentials.NewStaticCredentials(spacesToken, spacesSecret, ""),
 	})
-	sem := make(chan struct{})
+	sem := make(chan struct{}, 1)
 	uploader := s3manager.NewUploader(sess)
 	promMux := http.NewServeMux()
 	promMux.Handle("/metrics", promhttp.Handler())
