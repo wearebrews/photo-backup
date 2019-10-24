@@ -45,10 +45,6 @@ var requestsDenied = promauto.NewCounter(prometheus.CounterOpts{
 	Help:      "Number of requests denied",
 })
 
-var uploader *s3manager.Uploader
-
-var sem = make(chan struct{}, numConcurrentUploads)
-
 func hexToBase64(in string) (string, error) {
 	hexBytes, err := hex.DecodeString(in)
 	if err != nil {
@@ -57,71 +53,73 @@ func hexToBase64(in string) (string, error) {
 	return base64.StdEncoding.EncodeToString(hexBytes), nil
 }
 
-func uploadPhoto(w http.ResponseWriter, r *http.Request) {
-	//Limit number of concurrent requests
-	select {
-	case sem <- struct{}{}:
-		defer func() { <-sem }()
-	default:
-		requestsDenied.Inc()
-		http.Error(w, "Not available, try again", http.StatusTooManyRequests)
-		return
-	}
+func uploadPhoto(sem chan struct{}, uploader *s3manager.Uploader) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		//Limit number of concurrent requests
+		select {
+		case sem <- struct{}{}:
+			defer func() { <-sem }()
+		default:
+			requestsDenied.Inc()
+			http.Error(w, "Not available, try again", http.StatusTooManyRequests)
+			return
+		}
 
-	activeRequests.Inc()
-	defer activeRequests.Dec()
-	totalRequests.Inc()
+		activeRequests.Inc()
+		defer activeRequests.Dec()
+		totalRequests.Inc()
 
-	reader, err := r.MultipartReader()
-	if err != nil {
-		logrus.Panic(err)
-	}
+		reader, err := r.MultipartReader()
+		if err != nil {
+			logrus.Panic(err)
+		}
 
-	part, err := reader.NextPart()
-	if err != nil {
-		logrus.Panic(err)
-	}
-	if part.FormName() != "hash_sum" {
-		http.Error(w, "Unexpected part", http.StatusBadRequest)
-		return
-	}
-	var hashSum string
-	if bytes, err := ioutil.ReadAll(part); err == nil {
-		hashSum = string(bytes)
-	} else {
-		logrus.Panic(err)
-	}
+		part, err := reader.NextPart()
+		if err != nil {
+			logrus.Panic(err)
+		}
+		if part.FormName() != "hash_sum" {
+			http.Error(w, "Unexpected part", http.StatusBadRequest)
+			return
+		}
+		var hashSum string
+		if bytes, err := ioutil.ReadAll(part); err == nil {
+			hashSum = string(bytes)
+		} else {
+			logrus.Panic(err)
+		}
 
-	logrus.WithField("hashsum", hashSum).WithField("size", fileSize).Info("New file")
+		logrus.WithField("hashsum", hashSum).WithField("size", fileSize).Info("New file")
 
-	part, err = reader.NextPart()
-	if err != nil {
-		logrus.Panic(err)
-	}
+		part, err = reader.NextPart()
+		if err != nil {
+			logrus.Panic(err)
+		}
 
-	if part.FormName() != "file" {
-		http.Error(w, "Unexpected part", http.StatusBadRequest)
-		return
-	}
+		if part.FormName() != "file" {
+			http.Error(w, "Unexpected part", http.StatusBadRequest)
+			return
+		}
 
-	hash := md5.New()
-	tr := io.TeeReader(part, hash)
+		hash := md5.New()
+		tr := io.TeeReader(part, hash)
 
-	_, err = uploader.Upload(&s3manager.UploadInput{
-		Bucket: &bucket,
-		Key:    aws.String("pictures/" + part.FileName()),
-		Body:   tr,
-	})
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		logrus.Panic(err)
-	}
+		_, err = uploader.Upload(&s3manager.UploadInput{
+			Bucket: &bucket,
+			Key:    aws.String("pictures/" + part.FileName()),
+			Body:   tr,
+		})
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			logrus.Panic(err)
+		}
 
-	hashBytes := hash.Sum(nil)
-	hashHexString := hex.EncodeToString(hashBytes[:16])
-	if hashHexString != hashSum {
-		http.Error(w, "Hash does not match", http.StatusInternalServerError)
-		logrus.WithField("client_hash", hashSum).WithField("server_hash", hashHexString).Panic("Hash does not match")
+		hashBytes := hash.Sum(nil)
+		hashHexString := hex.EncodeToString(hashBytes[:16])
+		if hashHexString != hashSum {
+			http.Error(w, "Hash does not match", http.StatusInternalServerError)
+			logrus.WithField("client_hash", hashSum).WithField("server_hash", hashHexString).Panic("Hash does not match")
+		}
 	}
 }
 
@@ -132,10 +130,11 @@ func main() {
 		Region:      aws.String("us-east-1"),
 		Credentials: credentials.NewStaticCredentials(spacesToken, spacesSecret, ""),
 	})
-	uploader = s3manager.NewUploader(sess)
+	sem := make(chan struct{})
+	uploader := s3manager.NewUploader(sess)
 	promMux := http.NewServeMux()
 	promMux.Handle("/metrics", promhttp.Handler())
-	http.HandleFunc("/photos/upload", uploadPhoto)
+	http.HandleFunc("/photos/upload", uploadPhoto(sem, uploader))
 	go http.ListenAndServe(":9102", promMux)
 	http.ListenAndServe(":8080", nil)
 }
