@@ -81,26 +81,6 @@ func uploadPhoto(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		logrus.Panic(err)
 	}
-
-	if part.FormName() != "file_size" {
-		http.Error(w, "Unexpected part", http.StatusBadRequest)
-		return
-	}
-	var fileSize int64
-	if bytes, err := ioutil.ReadAll(part); err == nil {
-		fileSizeString := string(bytes)
-		fileSize, err = strconv.ParseInt(fileSizeString, 10, 64)
-		if err != nil {
-			logrus.Panic(err)
-		}
-	} else {
-		logrus.Panic(err)
-	}
-
-	part, err = reader.NextPart()
-	if err != nil {
-		logrus.Panic(err)
-	}
 	if part.FormName() != "hash_sum" {
 		http.Error(w, "Unexpected part", http.StatusBadRequest)
 		return
@@ -129,7 +109,7 @@ func uploadPhoto(w http.ResponseWriter, r *http.Request) {
 
 	_, err = uploader.Upload(&s3manager.UploadInput{
 		Bucket: &bucket,
-		Key:    aws.String(part.FileName()),
+		Key:    aws.String("pictures/" + part.FileName()),
 		Body:   tr,
 	})
 	if err != nil {
