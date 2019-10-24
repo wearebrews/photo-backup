@@ -13,5 +13,5 @@ docker-push: docker
 	docker push wearebrews/photo-backup-receiver
 
 docker-push-dev:
-	docker build -t wearebrews/photo_backup-receiver:dev -f dockerfiles/receiver.dockerfile .
+	docker build -t wearebrews/photo-backup-receiver:dev -f dockerfiles/receiver.dockerfile .
 	docker push wearebrews/photo-backup-receiver:dev
