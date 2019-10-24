@@ -2,13 +2,11 @@ package main
 
 import (
 	"crypto/md5"
-	"encoding/base64"
 	"encoding/hex"
 	"io"
 	"io/ioutil"
 	"net/http"
 	"os"
-	"strconv"
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/credentials"
@@ -87,7 +85,7 @@ func uploadPhoto(sem chan struct{}, uploader *s3manager.Uploader) http.HandlerFu
 			logrus.Panic(err)
 		}
 
-		logrus.WithField("hashsum", hashSum).WithField("size", fileSize).Info("New file")
+		logrus.WithField("hashsum", hashSum).Info("New file")
 
 		part, err = reader.NextPart()
 		if err != nil {
