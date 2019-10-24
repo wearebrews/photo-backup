@@ -27,6 +27,7 @@ const md5Postfix = ".md5"
 
 var spacesToken = os.Getenv("SPACES_TOKEN")
 var spacesSecret = os.Getenv("SPACES_SECRET")
+var bucket = "brews"
 
 var activeRequests = promauto.NewGauge(prometheus.GaugeOpts{
 	Namespace: "photo_uploader",
@@ -43,6 +44,8 @@ var requestsDenied = promauto.NewCounter(prometheus.CounterOpts{
 	Name:      "denied_requests",
 	Help:      "Number of requests denied",
 })
+
+var uploader *s3manager.Uploader
 
 var sem = make(chan struct{}, numConcurrentUploads)
 
@@ -124,15 +127,6 @@ func uploadPhoto(w http.ResponseWriter, r *http.Request) {
 	hash := md5.New()
 	tr := io.TeeReader(part, hash)
 
-	endpoint := "https://fra1.digitaloceanspaces.com"
-	bucket := "brews"
-	sess := session.New(&aws.Config{
-		Endpoint:    &endpoint,
-		Region:      aws.String("us-east-1"),
-		Credentials: credentials.NewStaticCredentials(spacesToken, spacesSecret, ""),
-	})
-	uploader := s3manager.NewUploader(sess)
-
 	_, err = uploader.Upload(&s3manager.UploadInput{
 		Bucket: &bucket,
 		Key:    aws.String(part.FileName()),
@@ -152,6 +146,13 @@ func uploadPhoto(w http.ResponseWriter, r *http.Request) {
 }
 
 func main() {
+	endpoint := "https://fra1.digitaloceanspaces.com"
+	sess := session.New(&aws.Config{
+		Endpoint:    &endpoint,
+		Region:      aws.String("us-east-1"),
+		Credentials: credentials.NewStaticCredentials(spacesToken, spacesSecret, ""),
+	})
+	uploader = s3manager.NewUploader(sess)
 	promMux := http.NewServeMux()
 	promMux.Handle("/metrics", promhttp.Handler())
 	http.HandleFunc("/photos/upload", uploadPhoto)
