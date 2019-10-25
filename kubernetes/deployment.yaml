@@ -6,6 +6,7 @@ metadata:
     kubernetes.io/ingress.class: nginx
     certmanager.k8s.io/cluster-issuer: letsencrypt-prod
     nginx.ingress.kubernetes.io/proxy-body-size: 50m
+    nginx.ingress.kubernetes.io/proxy-request-buffering: "off" #Needed to avoid nginx reading the entire body, only to return a 429
 spec:
   tls:
   - hosts:
